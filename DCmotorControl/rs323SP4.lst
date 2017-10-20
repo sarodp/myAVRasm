@@ -1,0 +1,1121 @@
+
+AVRASM ver. 2.1.12  C:\AVR\AVRprj2007\rs232SP4\rs232SP4.asm Wed Feb 20 15:01:34 2008
+
+C:\AVR\AVRprj2007\rs232SP4\rs232SP4.asm(34): Including file 'C:\Program Files\Atmel\AVR Tools\AvrAssembler2\Appnotes\tn2313def.inc'
+C:\AVR\AVRprj2007\rs232SP4\rs232SP4.asm(35): Including file 'C:\AVR\AVRprj2007\rs232SP4\avr1.inc'
+C:\AVR\AVRprj2007\rs232SP4\rs232SP4.asm(56): warning: Register r12 already defined by the .DEF directive
+C:\AVR\AVRprj2007\rs232SP4\rs232SP4.asm(57): warning: Register r11 already defined by the .DEF directive
+C:\AVR\AVRprj2007\rs232SP4\rs232SP4.asm(58): warning: Register r10 already defined by the .DEF directive
+C:\AVR\AVRprj2007\rs232SP4\rs232SP4.asm(59): warning: Register r15 already defined by the .DEF directive
+C:\AVR\AVRprj2007\rs232SP4\rs232SP4.asm(60): warning: Register r25 already defined by the .DEF directive
+                 
+                 
+                 ; DC MOTOR CONTROLLER V1.0                  (C)PowerPartner Co.,Ltd.
+                 ;
+                 ; filename:	rs232SP4k.asm  ********************>>>>>>>>>>>>>>
+                 ;
+                 ;a-menu RS232
+                 ;b-test sub serial,getline
+                 ;c-timer0 enable + backgroud intr. ;/
+                 ;d-timer1 enable = counter+TIM1_CMPA intr. ;/
+                 ;d-cmd "L" ;/
+                 ;d-do_fwd/do_rev fixed 	:1byte=ok , 2byte=ok  ;/
+                 ;e-do_fwd/do_rev <pulse> 
+                 ;e-get_val=BL:AH:AL=3byte /run2byte=ok 	;/
+                 ;f-fslip/rslip ;fixed=38,38
+                 ;f-do_fwd/do_rev <pulse> ..adjslip		;/
+                 ;g-fslip/rslip :eeprom save/load		;/
+                 ;
+                 ;h-rearrange/rename subroutine
+                 ;h-cmd KL,YZ listpos/tcnt1, zeropos/tcnt1
+                 ;h-change PC-i --> lblXX:
+                 ;
+                 ;i-rxint: review cli/sei   		;/
+                 ;i-do_showPOS bug.correct okay 	;/
+                 ;i-Timer0.intr =calc _posXHL		;/
+                 ;i-do_fwd/do_rev updateposlast	;/
+                 ;
+                 ;j-dogoto<pos> pos=0...60000		;/
+                 ;j-calcGOTO					;/
+                 ;
+                 ;k-do_fwd,do_rev checklimit		;/
+                 ;
+                 ;---------------------------------------------------------------------------------;
+                 .list
+                 
+                 ;---------------------------------------------------
+                 	;hardware 
+                 .equ	SYSCLK	= 20000000
+                 .equ	BPS		= 38400
+                 
+                 ;.equ	motorout	= PORTD			;TestBoard-sep50
+                 ;.equ	motorddr	= DDRD
+                 ;.equ	mfwd		= 2
+                 ;.equ	mrev		= 3
+                 
+                 .equ	motorout	= PORTB			;PCB-nov50
+                 .equ	motorddr	= DDRB
+                 .equ	mfwd		= 3
+                 .equ	mrev		= 4
+                 ;equ	mzero		= xx
+                 
+                 ;-----------------------------------------------------
+                 	;registers
+                 .def	_PosX		= r12	;Current position
+                 .def	_PosH		= r11	;
+                 .def	_PosL		= r10	;/
+                 .def	_0		= r15	;Permanent zero register
+                 .def	_Flags	= r25	; x|x|x|x| x|rev|fwd|echo
+                 
+                 ;----------------------------------------------------------;
+                 ; EEPROM Area
+                 ;----------------------------------------------------------;
+                 .eseg
+                 		;EEbank#0 parameters
+000000 27        EEfslip:	.db		39
+000001 25        EErslip:	.db		37
+000002 00 00     EEfslow:	.dw		0x000
+000004 00 00
+000006 00 00     EErslow:	.dw		0x000,0x0000
+000008 00
+000009 00
+00000a 00
+00000b 00
+00000c 00
+00000d 00
+00000e 00
+00000f 00        		.db		0,0,0,0 ,0,0,0,0
+                 
+                 .equ		N_PARM = 8	; Number of words per bank.
+                 
+                 ;----------------------------------------------------------;
+                 ; Data memory area
+                 ;----------------------------------------------------------;
+                 .dseg
+                 .org	RAMTOP
+                 
+                 		;DC Motor Parameters
+                 Parms:
+000060           Fslip:	.byte	1	;fwd slip = 0-255
+000061           Rslip:	.byte	1	;rev slip = 0-255
+000062           Fslow:	.byte	2	;fwd slow = 0-1000
+000064           Rslow:	.byte	2	;rev slow = 0-1000
+                 
+000066           Poslast:	.byte	3	;Pos.last:X:H:L
+                 
+                 		;Host command
+000069           RxBuf:	.byte	2+16	; Serial receive buffer (Rp, Wp, Buff[16])
+00007b           LineBuf:	.byte	20	; Command line input buffer
+                 
+                 ; Command/Servo registers
+                 ;CtPos:	.byte	3	;Position	 g/j	mode 3
+                 ;CtSub:	.byte	2	;Sub command s	mode 0/1/2
+                 ;PvInt:	.byte	2	;Integration register
+                 ;PvPos:	.byte	2	;Velocity detection register
+                 ;OvTmr:	.byte	2	;Torque limit timer
+                 ;Mode:	.byte	1	;Servo Mode	m
+                 
+                 ; Displacements referrd from RAMTOP
+                 ;.equ	iCtSub	= CtSub-RAMTOP
+                 ;.equ	iPvInt	= PvInt-RAMTOP
+                 ;.equ	iPvPos	= PvPos-RAMTOP
+                 ;.equ	iOvTmr	= OvTmr-RAMTOP
+                 ;.equ	iMode		= Mode-RAMTOP
+                 
+                 
+                 ;**************************************************************
+                 ; Program code
+                 ;**************************************************************
+                 .cseg
+                 	; Interrupt Vectors (ATtiny2313)
+000000 c00b      	rjmp	reset		;00 Reset
+000001 cffe      	rjmp	0		;01 INT0
+000002 cffd      	rjmp	0		;02 INT1
+000003 cffc      	rjmp	0		;03 TC1 CAPT
+000004 c155      	rjmp	TIM1_CMPA	;04 TC1 COMPA
+000005 cffa      	rjmp	0		;05 TC1 overflow
+000006 c12b      	rjmp	background	;06 TC0 overflow
+000007 c155      	rjmp	rxint		;07 USART0 Rx ready
+000008 cff7      	rjmp	0		;08 USART0 Tx UDRE
+000009 cff6      	rjmp	0		;09 USART0 Tx empty
+00000a cff5      	rjmp	0		;10 Analog comparator
+00000b cff4      	rjmp	0		;11 PCINT
+                 ;	rjmp	0		;12 TC1 COMPB
+                 ;	rjmp	0		;13 TC0 COMPA
+                 ;	rjmp	0		;14 TC0 COMPB
+                 ;	rjmp	0		;15 USI START
+                 ;	rjmp	0		;16 USI OVF
+                 ;	rjmp	0		;17 EEPROM
+                 ;	rjmp	0		;18 WDT
+                 
+                 ;--------------------------------------------------------
+                 reset:
+                 	;--Stack.clear
+00000c ed0f
+00000d bf0d      	outi	SPL, low(RAMEND)		;Stask ptr
+                 
+                 	;---SRAM.clear
+00000e 24ff      	clr	_0				;Clear RAM
+00000f e6c0
+000010 e0d0      	ldiw	Y, RAMTOP			;
+000011 92f9      	st	Y+, _0			;
+000012 3ec0      	cpi	YL, low(RAMTOP+128)	;
+000013 f7e9      	brne	PC-2				;/
+                 
+                 	;---PortD,B
+000014 e70f
+000015 bb02      	outi	PORTD, 0b01111111	;Initialize PORTD
+000016 e002
+000017 bb01      	outi	DDRD,  0b00000010	;/ 1=output, 0=input
+                 
+000018 ee00
+000019 bb08      	outi	PORTB, 0b11100000	;Initialize PORTB 34=out
+00001a e108
+00001b bb07      	outi	DDRB,  0b00011000	;/ 1=output, 0=input
+                 
+                 
+                 	;--Timer0,1
+00001c e005
+00001d bf03      	outi	TCCR0B,0b00000101	;Init Timer0, CS210= 101 =INTClk/1024
+                 ;	outi	TCCR0A,0b00000000	;na/
+                 
+00001e e006
+00001f bd0e      	outi	TCCR1B,0b00000110	;Init Timer1, CS210= 110 =ExtClk/Falling
+                 ;	outi	TCCR1A,0b00000000	;na
+                 ;	outi	TCCR1C,0b00000000	;na
+                 
+                 ;	outi	TIMSK,0b00000010	;T0overflow.INTR
+000020 e402
+000021 bf09      	outi	TIMSK,0b01000010	;T1cmpA.INTR|...|T0overflow.INTR|
+                 
+                 	;--USART
+000022 e10f
+000023 e010      	ldiw	A, SYSCLK/16/BPS-1	;USART
+000024 b912
+000025 b909      	outw	UBRR, A			;
+000026 e908
+000027 b90a      	outi	UCSRB, 0b10011000		;RXCIE,RXen,TXen,8bit/
+000028 e006
+000029 b903      	outi	UCSRC, 0b00000110		;Async,None,1stop,8bit/
+                 
+                 	;--init var....
+00002a e091      	ldi	_Flags, 0b00000001	;echoON,MotorStop
+00002b e000      	ldi	AL,0				;eeprom bank0 parameters
+00002c d0f3      	rcall	load_parms
+                 
+                 	;--StartUp
+00002d e3ea
+00002e e0f4      	ldiw	Z, (m_start<<1)	;Start up message
+00002f d1d4      	rcall	tx_romstr		;/
+000030 9478      	sei
+                 
+                 ;----------------------------------------------------------;
+                 ; Command processing loop
+                 ;----------------------------------------------------------;
+                 main:
+                 ;	rcall	calcPosXHL
+000031 e2e0
+000032 e0f4      	ldiw	Z, (m_prompt<<1)	;Display command prompt
+000033 d1d0       	rcall	tx_romstr		;/
+                 	
+000034 d15d      	rcall	get_line	;Get a command line
+000035 913d      	ld	BH,X+		;BH = command char
+000036 3631      	cpi	BH,'a'	;CAPS
+000037 f008      	brcs	PC+2		;
+000038 5230      	subi	BH,0x20	;/
+000039 3230      	cpi	BH,' '	;Null line ?
+00003a f3b4      	brlt	main	
+                 
+00003b 3436      	cpi	BH,'F'	;1.Forward?
+00003c f409
+00003d c04e      	rjeq	do_fwdREL	;
+00003e 3532      	cpi	BH,'R'	;2.Reverse?
+00003f f409
+000040 c037      	rjeq	do_revREL	;
+000041 3437      	cpi	BH,'G'	;22.Goto?
+000042 f409
+000043 c01c      	rjeq	do_goto	;
+                 
+000044 343b      	cpi	BH,'K'		;3.List TCNT1?
+000045 f409
+000046 c081      	rjeq	do_showtcnt1	;/
+000047 343c      	cpi	BH,'L'		;3.List posXHL?
+000048 f409
+000049 c09e      	rjeq	do_showPOS		;/
+                 
+00004a 353a      	cpi	BH,'Z'		;33.Zero posXHL?
+00004b f409
+00004c c08d      	rjeq	do_zeroPOS		;/
+                 	
+00004d 3533      	cpi	BH, 'S'		;4.ShowFR slip set?
+00004e f409
+00004f c057      	rjeq	do_showSlipSet	;
+000050 3534      	cpi	BH, 'T'		;5.FWD slip set?
+000051 f409
+000052 c056      	rjeq	do_fwdslipset	;
+000053 3535      	cpi	BH, 'U'		;5.REV slip set?
+000054 f409
+000055 c060      	rjeq	do_revslipset	;
+000056 333f      	cpi	BH, '?'		;99.Help?
+000057 f021      	breq	do_help		;
+                 
+                 cmd_err:
+000058 e2e6
+000059 e0f4      	ldiw	Z,(m_error<<1)	;Syntax error
+00005a d1a9      	rcall	tx_romstr
+00005b cfd5      	rjmp	main	;PC+3
+                 
+                 do_help:
+00005c e7e4
+00005d e0f4      	ldiw	Z,(m_help<<1)	;Help
+00005e d1a5      	rcall	tx_romstr
+00005f cfd1      	rjmp	main
+                 	;/sss
+                 
+                 ;-------------------------------------
+                 do_goto:
+000060 d14c       	rcall	get_val	;val24= BL:AH:AL
+000061 f409
+000062 cff5      	rjeq	cmd_err
+000063 d003      	rcall	calcGOTO	;BL:AH:AL=no.pulse,Carry0/1=F/R
+000064 f008
+000065 c029      	rjcc	do_fwd1
+000066 c014      	rjmp	do_rev1
+                 
+                 ;--------------------------------------
+                 calcGOTO:
+                 	;IN: 	BL:AH:AL=pos.goto, _posXHL
+                 	;OUT:	BL:AH:AL=pulse, Carry0/1=F/R
+000067 2e00      	mov	t0l,al	;  t2l:t0HL=_posGOTO
+000068 2e11      	mov	t0h,ah
+000069 2e22      	mov	t2l,bl
+                 
+                 calGofwd:
+00006a 190a      	sub	al,_posL	; _posGoto - posXHL
+00006b 091b      	sbc	ah,_posH
+00006c 092c      	sbc	bl,_posX
+00006d f010      	brcs	calGorev
+00006e 9488      	clc			;carry=0
+00006f 9508      	ret		
+                 calGorev:
+000070 2d0a      	mov	al,_posL	; _posXHL - _posGoto
+000071 2d1b      	mov	ah,_posH
+000072 2d2c      	mov	bl,_posX
+000073 1900      	sub	al,t0l		
+000074 0911      	sbc	ah,t0h
+000075 0922      	sbc	bl,t2l
+000076 9408      	sec			;carry=1
+000077 9508      	ret
+                 
+                 ;-------------------------------------
+                 do_revREL:
+000078 d134       	rcall	get_val	;val24= BL:AH:AL
+000079 f409
+00007a cfdd      	rjeq	cmd_err
+                 do_rev1:
+00007b 9120 0061 	lds	BL,Rslip	;AH:AL=Revset-Rslip
+00007d 1b02      	sub	AL,BL		;
+00007e 4010      	sbci	AH,0		;
+00007f f40c
+000080 cfb0      	rjlt	main		;AH:AL=neg then exit
+                 
+000081 bd1b      	out	OCR1AH,AH		;rev.pulse.set
+000082 bd0a      	out	OCR1AL,AL		;
+                 
+000083 d01c      	rcall	updatePoslast	;updateposlast
+000084 e000
+000085 bd0d      	outi	tcnt1h,0
+000086 e000
+000087 bd0c      	outi	tcnt1l,0
+                 
+000088 98c3      	cbi	motorout,mfwd	;MotorRev
+000089 9ac4      	sbi	motorout,mrev
+00008a e095      	ldi	_flags,0b00000101	;flag.rev
+                 	
+                 ;	rjmp	do_showTCNT1	;/
+00008b c05c      	rjmp	do_showPOS		;/or/
+                 
+                 ;-------------------------------------
+                 do_fwdREL:
+00008c d120       	rcall	get_val		;val24= BL:AH:AL
+00008d f409
+00008e cfc9      	rjeq	cmd_err
+                 do_fwd1:
+00008f 9120 0060 	lds	BL,Fslip		;AH:AL=fwdset-Fslip
+000091 1b02      	sub	AL,BL			;
+000092 4010      	sbci	AH,0			;
+000093 f40c
+000094 cf9c      	rjlt	main			;if zero/neg return
+000095 bd1b      	out	OCR1AH,AH		;fwd.pulse.set
+000096 bd0a      	out	OCR1AL,AL
+                 
+000097 d008      	rcall	updatePoslast	;update poslast
+000098 e000
+000099 bd0d      	outi	tcnt1h,0
+00009a e000
+00009b bd0c      	outi	tcnt1l,0
+                 
+00009c 9ac3      	sbi	motorout,mfwd	;MotorFwd
+00009d 98c4      	cbi	motorout,mrev
+00009e e093      	ldi	_flags,0b00000011
+                 	
+                 ;	rjmp	do_showTCNT1	;/
+00009f c048      	rjmp	do_showpos		;/or/
+                 
+                 
+                 ;-------------------------------------
+                 updateposLast:
+0000a0 92a0 0066 	sts	poslast,_posL
+0000a2 92b0 0067 	sts	poslast+1,_posH
+0000a4 92c0 0068 	sts	poslast+2,_posX
+0000a6 9508      	ret
+                 
+                 ;--------------------------------------
+                 do_showSlipSet:
+0000a7 d05b      	rcall	showSlipSet
+0000a8 cf88      	rjmp 	main
+                 
+                 do_fwdslipset:
+0000a9 d103      	rcall	get_val		;get new Fslip?
+0000aa f409
+0000ab cfac      	rjeq	cmd_err
+                 
+0000ac 9300 0060 	sts	Fslip,AL
+0000ae e020      	ldi	BL,low(EEfslip)	;AL=data, BL=addr
+0000af 99e1      	sbic	EECR, EEPE		;loop_wait_writedone
+0000b0 cffe      	rjmp	PC-1			;/
+0000b1 bb2e      	out	EEAR, BL		;out_addr1
+0000b2 bb0d      	out	EEDR, AL		;out_data1
+0000b3 9ae2      	sbi	EECR, EEMPE		;out_write1
+0000b4 9ae1      	sbi	EECR, EEPE		;/
+0000b5 cf7b      	rjmp	main
+                 		
+                 do_revslipset:
+0000b6 d0f6      	rcall	get_val		;get new Fslip?
+0000b7 f409
+0000b8 cf9f      	rjeq	cmd_err
+                 
+0000b9 9300 0061 	sts	Rslip,AL
+0000bb e021      	ldi	BL,low(EErslip)	;AL=data, BL=addr
+0000bc 99e1      	sbic	EECR, EEPE		;loop_wait_writedone
+0000bd cffe      	rjmp	PC-1			;/
+0000be bb2e      	out	EEAR, BL		;out_addr1
+0000bf bb0d      	out	EEDR, AL		;out_data1
+0000c0 9ae2      	sbi	EECR, EEMPE		;out_write1
+0000c1 9ae1      	sbi	EECR, EEPE		;/
+0000c2 cf6e      	rjmp	main
+                 
+                 ;------------------------------------------------;
+                 do_zeroTCNT1:
+                 	;Set zero position counter
+0000c3 e000
+0000c4 bd0d      	outi	tcnt1h,0		;out hibyte first
+0000c5 e000
+0000c6 bd0c      	outi	tcnt1l,0		;then out lobyte 
+0000c7 c000      	rjmp	do_showTCNT1	;/show loc
+                 
+                 do_showTCNT1:
+                 	;Show location counter
+                 	;IN:  TCNT1H:L
+0000c8 e00a      	ldi	AL, 0x0a	;[LF]
+0000c9 d142      	rcall	txmit
+                 dtc_p:	
+0000ca e00d      	ldi	AL, 0x0d	;[CR] 
+0000cb d140      	rcall	txmit		;
+                 
+                 ;	cli			;***************>>>>>>>>???????????
+0000cc b50c      	in	AL,tcnt1l	;lobyte.first ;/
+0000cd b51d      	in	ah,tcnt1h
+0000ce 2d2f      	mov	BL, _0	;
+                 ;	sei			;***************>>>>>>>>???????????
+                 
+0000cf 2e10      	mov	T0H, al	;
+0000d0 d10e      	rcall	tx_valdec	;
+0000d1 e200      	ldi	AL, ' '	;
+0000d2 d139      	rcall	txmit		;/
+                 dtc_w:
+0000d3 d0a8      	rcall	receive	;pc-4::Break if any key was pressed
+0000d4 f009
+0000d5 cf5b      	rjne	main		;/
+                 
+0000d6 b50c      	in	al,tcnt1l	;
+0000d7 1610      	cp	T0H, al	;Continue if not changed
+0000d8 f3d1      	breq	dtc_w		;/
+0000d9 cff0      	rjmp	dtc_p		;/ok/
+                 
+                 ;----------------------------------------------
+                 do_zeroPOS:
+                 	;Set zero position counter
+0000da e000
+0000db bd0d      	outi	tcnt1h,0		;out hibyte first
+0000dc e000
+0000dd bd0c      	outi	tcnt1l,0		;then out lobyte 
+0000de 92f0 0066 	sts	poslast,_0
+0000e0 92f0 0067 	sts	poslast+1,_0
+0000e2 92f0 0068 	sts	poslast+2,_0
+0000e4 2caf      	mov	_posL,_0
+0000e5 2cbf      	mov	_posH,_0
+0000e6 2ccf      	mov	_posX,_0
+0000e7 c000      	rjmp	do_showPOS		;/show loc
+                 
+                 do_showPOS:
+                 	;Show location counter
+                 	;IN:  _posXHL
+0000e8 e00a      	ldi	AL, 0x0a	;[LF]
+0000e9 d122      	rcall	txmit
+                 dps_p:	
+0000ea e00d      	ldi	AL, 0x0d	;[CR] 
+0000eb d120      	rcall	txmit		;
+                 
+0000ec 94f8      	cli			;***************>>>>>>>>?????????
+0000ed 2d0a      	mov	al,_posl
+0000ee 2d1b      	mov	ah,_posh
+0000ef 2d2c      	mov	bl, _posX	;
+0000f0 9478      	sei			;***************>>>>>>>>?????????
+                 
+0000f1 2e10      	mov	T0H, al	;
+0000f2 d0ec      	rcall	tx_valdec	;  tx-decimal
+0000f3 e200      	ldi	AL, ' '	;
+0000f4 d117      	rcall	txmit		;/
+                 
+                 dps_w:
+0000f5 d086      	rcall	receive	;pc-4::Break if any key was pressed
+0000f6 f009
+0000f7 cf39      	rjne	main		;/
+                 
+0000f8 141a      	cp	T0H, _posL	;Continue if not changed
+0000f9 f3d9      	breq	dps_w		;PC-4/
+0000fa cfef      	rjmp	dps_p		;/ok/
+                 
+                 ;*************************************************************
+                 ;200--subXXX
+                 ;*************************************************************
+                 ;------------------------------------------
+                 
+                 MotorStop:
+0000fb 98c3      	cbi	motorout,mfwd
+0000fc 98c4      	cbi	motorout,mrev
+0000fd e091      	ldi	_flags,0b00000001
+0000fe 9508      	ret
+                 
+                 MotorBrake:
+0000ff 9ac3      	sbi	motorout,mfwd
+000100 9ac4      	sbi	motorout,mrev
+000101 e091      	ldi	_flags,0b00000001
+000102 9508      	ret
+                 	;/
+                 
+                 
+                 ;---------------------------------------------------------
+                 showSlipset:
+                 	;Show Fslip SRAM value
+000103 e000      	ldi	AL,0			;read eerom:bank0
+000104 d01b      	rcall	load_parms
+                 
+000105 e00a      	ldi	Al,10
+000106 d105      	rcall	txmit
+000107 e00d      	ldi	Al,13
+000108 d103      	rcall	txmit
+                 
+000109 e504      	ldi	Al,'T'
+00010a d101      	rcall	txmit
+00010b e30d      	ldi	Al,'='
+00010c d0ff      	rcall	txmit
+00010d 2d2f      	mov	BL,_0
+00010e 2d1f      	mov	AH,_0
+00010f 9100 0060 	lds	Al,low(fslip)	;fslip.val
+000111 d0cd      	rcall	tx_valdec
+                 
+000112 e00d      	ldi	Al,13			;[CR][LF]
+000113 d0f8      	rcall	txmit
+000114 e00a      	ldi	Al,10
+000115 d0f6      	rcall	txmit
+                 
+000116 e505      	ldi	Al,'U'
+000117 d0f4      	rcall	txmit
+000118 e30d      	ldi	Al,'='
+000119 d0f2      	rcall	txmit
+00011a 2d2f      	mov	BL,_0
+00011b 2d1f      	mov	AH,_0
+00011c 9100 0061 	lds	Al,low(rslip)	;rslip.val	
+00011e d0c0      	rcall	tx_valdec		;/ok/
+00011f 9508      	ret
+                 
+                 ;-eeprom-----------------------------------------
+                 load_parms: 		
+                 	;in:  AL=bank#
+                 	;out: BH=EEROM.addr
+                 	;	  Y =SRAM.addr
+                 	;	  AH=no.byte
+000120 d008      	rcall	get_eeadr
+                 load1:
+000121 bb3e      	out	EEAR, BH
+000122 9533      	inc	BH
+000123 9ae0      	sbi	EECR, EERE
+000124 b30d      	in	AL, EEDR
+000125 9309      	st	Y+, AL
+000126 951a      	dec	AH
+000127 f7c9      	brne	load1	;PC-6		;/smc3/
+000128 9508      	ret
+                 
+                 get_eeadr:		
+                 	;IN:  AL=bank# 
+                 	;OUT: BH=EEROM.addr
+                 	;     Y =SRAM.addr
+                 	;     AH=no.byte
+000129 e110      	ldi	AH, N_PARM*2	;word*2=byte
+00012a 2733      	clr	BH
+                 gee1:
+00012b 5001      	subi	AL, 1
+00012c f010      	brcs	gee2	;PC+3
+00012d 0f31      	add	BH, AH
+00012e cffc      	rjmp	gee1	;PC-3
+                 
+                 gee2:	
+00012f e6c0
+000130 e0d0      	ldiw	Y, Parms		;/smc3/
+000131 9508      	ret
+                 
+                 
+                 ;*********************************************************
+                 ;INTRxxx
+                 ;*********************************************************
+                 ;background0:
+                 ;	;--get _PosX:H:L = TCNT1H:L
+                 ;	in	_PosL,TCNT1L	;in lobyte first
+                 ;	in	_PosH,TCNT1H	;then in hibyte
+                 ;	mov	_PosX,_0		;/
+                 ;	reti
+                 
+                 background:
+                 	;--push.1234
+000132 930f      	push	Al		;ps1	
+000133 b70f      	in	al,sreg	;ps2
+000134 930f      	push	Al		;ps22	
+000135 931f      	push	ah		;ps3
+000136 932f      	push	bl		;ps4
+000137 933f      	push	bh		;ps5
+000138 934f      	push	cl		;ps6
+                 
+                 	;--calcposXHL:
+                 	;IN:	_flags, tcnt
+                 	;OUT: _PosX:H:L
+000139 b52c      	in	bl,TCNT1L		; in lo.byte then in hi.byte
+00013a b53d      	in	bh,TCNT1H		;b=tnct1   >>>
+                 
+00013b 9100 0066 	lds	al,poslast		;ca=poslast >>>
+00013d 9110 0067 	lds	ah,poslast+1
+00013f 9140 0068 	lds	cl,poslast+2
+                 
+000141 3093      	cpi	_flags,0b00000011	;+fwd?
+000142 f029      	breq	bfwd
+000143 3095      	cpi	_flags,0b00000101	;-rev?
+000144 f039      	breq	brev
+000145 3091      	cpi	_flags,0b00000001	;stop?	;***********?????????
+000146 f009      	breq	bfwd			;stop= +fwd	;***********?????????
+                 	;breq	bsave			;stop= 0none
+000147 c00a      	rjmp	bpop			;else bpop
+                 
+                 bfwd:	;--calc fwd
+000148 0f02      	add	al,bl			;ca=poslast+tcnt1 >>>
+000149 1f13      	adc	ah,bh
+00014a 1d4f      	adc	cl,_0	
+00014b c003      	rjmp	bsave
+                 
+                 brev:	;--calc rev
+00014c 1b02      	sub	al,bl			;ca=poslast-tcnt1 >>>>
+00014d 0b13      	sbc	ah,bh
+00014e 094f      	sbc	cl,_0	
+                 
+                 bsave:;--save
+00014f 2ea0      	mov	_posL,al		;pos=ca   >>>
+000150 2eb1      	mov	_posH,ah
+000151 2ec4      	mov	_posX,cl
+                 	
+                 bpop:	;--pop.1234
+000152 914f      	pop	cl		;ps6
+000153 913f      	pop	bh		;ps5
+000154 912f      	pop	bl		;ps4
+000155 911f      	pop	ah		;ps3
+000156 910f      	pop	al		;ps2
+000157 bf0f      	out	sreg,al	;ps2
+000158 910f      	pop	Al		;ps1	
+000159 9518      	reti
+                 
+                 ;-----------------------------
+                 TIM1_CMPA:
+00015a 9ac3      	sbi	motorout,mfwd		;motorbrake
+00015b 9ac4      	sbi	motorout,mrev
+00015c 9518      	reti
+                 	;/
+                 
+                 ;---------------------
+                 rxint:	
+                 	;Read RxDATA -->RxBuf
+                 	;push.1234
+00015d 930f      	push	AL		;push1
+00015e b70f      	in	AL, SREG	
+00015f 932f      	push	BL		;push2
+000160 b12c      	in	BL, UDR
+000161 9857      	cbi	UCSRB, RXCIE
+                 ;	sei			;-------********>>>>>>>>>>>ORG
+000162 931f
+000163 930f      	pushw	A		;push3
+000164 93df
+000165 93cf      	pushw	Y		;push4
+                 	
+000166 e6c9
+000167 e0d0      	ldiw	Y, RxBuf
+000168 8108      	ldd	AL, Y+0
+000169 8119      	ldd	AH, Y+1
+00016a 9513      	inc	AH
+00016b 701f      	andi	AH, 15
+                 
+00016c 1710      	cp	AH, AL
+00016d f029      	breq	rxexit	;pc+6
+00016e 8319      	std	Y+1, AH
+00016f 951a      	dec	AH
+000170 701f      	andi	AH, 15
+000171 0fc1      	add	YL, AH
+000172 832a      	std	Y+2, BL
+                 
+                 rxexit:
+                 	;pop.4321
+000173 91cf
+000174 91df      	popw	Y		;pop4
+000175 910f
+000176 911f      	popw	A		;pop3
+000177 912f      	pop	BL		;pop2
+000178 bf0f      	out	SREG, AL
+000179 910f      	pop	AL		;pop1
+                 ;	cli			;-------***********>>>>>>>>>>>ORG
+00017a 9a57      	sbi	UCSRB, RXCIE
+00017b 9518      	reti			;/smc3/
+                 
+                 
+                 ;---------------------------------------------------------
+                 ;RXsub..
+                 ;---------------------------------------------------------
+                 ;-rx--------------------------------------------------
+                 receive:
+                 	; Receive a char into AL. (ZR=no data)
+00017c 931f      	push	AH
+00017d 93df
+00017e 93cf      	pushw	Y
+00017f e6c9
+000180 e0d0      	ldiw	Y, RxBuf
+000181 94f8      	cli			;****************>>>
+000182 8118      	ldd	AH, Y+0
+000183 8109      	ldd	AL, Y+1
+000184 1710      	cp	AH, AL
+000185 f039      	breq	rcv1	;PC+8
+000186 0fc1      	add	YL, AH
+000187 810a      	ldd	AL, Y+2
+000188 1bc1      	sub	YL, AH
+000189 9513      	inc	AH
+00018a 701f      	andi	AH, 15
+00018b 8318      	std	Y+0, AH
+00018c 9498      	clz
+                 rcv1:
+00018d 9478      	sei			;****************>>>
+00018e 91cf
+00018f 91df      	popw	Y
+000190 911f      	pop	AH
+000191 9508      	ret
+                 
+                 ;-rx--------------------------------------------
+                 get_line:
+                 	;Input a command line into LineBuf.
+                 	;IN:	rxint->linebuf 
+                 	;OUT: 	
+                 	;DISP: txecho
+000192 e7ab
+000193 e0b0      	ldiw	X,LineBuf
+000194 e030      	ldi	BH,0
+                 
+000195 dfe6      gl1:  rcall	receive
+000196 f3f1      	breq	gl1		;PC-1
+000197 930c      	st	X,AL
+                 
+000198 300d      	cpi	AL,0x0d	;[CR]?
+000199 f419      	brne	gl4		;pc+4
+00019a e7ab
+00019b e0b0      	ldiw	X,LineBuf
+00019c c06d      	rjmp	txecho
+                 
+00019d 3008      gl4:  cpi	AL,0x08	;[BS]?
+00019e f431      	brne	gl7		;PC+7
+00019f 3030      	cpi	BH,0
+0001a0 f3a1      	breq	gl1
+0001a1 d068      	rcall	txecho
+0001a2 9711      	sbiw	XL,1
+0001a3 953a      	dec	BH
+0001a4 cff0      	rjmp	gl1
+                 
+0001a5 3200      gl7: cpi	AL,' '	;[SPACEbar]?
+0001a6 f370      	brcs	gl1
+0001a7 3133      	cpi	BH,20-1
+0001a8 f361      	breq	gl1
+0001a9 d060      	rcall	txecho
+                 
+0001aa 9611      	adiw	XL,1
+0001ab 9533      	inc	BH
+0001ac cfe8      	rjmp	gl1		;/sp4/
+                 
+                 ;-rx-------------------------------------------
+                 get_val:
+                 	;----------------------------------------
+                 	; Get value of decimal string
+                 	; IN: 	X = ASCII string pointer
+                 	; OUT:  X 		 = updated
+                 	;       BL:AH:AL = 24bit value
+                 	;		C  = if    C=1: error
+                 	;       Z  = elsif Z=1: end of line, value=0
+                 	;          = else:      BL:AH:AL = 24bit value
+                 	;
+                 	;  Positive:   "300"
+                 	;  Negative:   "-125000"
+                 	;---------------------------------------
+0001ad 94e8      	clt			;clr Tbitreg
+0001ae 2700      	clr	AL
+0001af 2711      	clr	AH
+0001b0 2722      	clr	BL
+                 
+0001b1 913d      	ld	BH,X+
+0001b2 3230      	cpi	BH,' '
+0001b3 f138      	brcs	gd_n
+0001b4 f3e1      	breq	PC-3
+                 
+0001b5 323d      	cpi	BH,'-'
+0001b6 f411      	brne	PC+3
+0001b7 9468      	set			;set Tbitreg
+                 
+                 gd_l:	
+0001b8 913d      	ld	BH,X+
+                 
+0001b9 3231      	cpi	BH,' '+1
+0001ba f0b0      	brcs	gd_e
+0001bb 5330      	subi	BH,'0'
+0001bc f088      	brcs	gd_x
+0001bd 303a      	cpi	BH,10
+0001be f478      	brcc	gd_x
+                 
+0001bf e149      	ldi	CL, 25
+0001c0 e05a      	ldi	CH, 10
+0001c1 1800      	sub	r0, r0
+0001c2 9406      	lsr	r0
+0001c3 9527      	ror	BL
+0001c4 9517      	ror	AH
+0001c5 9507      	ror	AL
+0001c6 f408      	brcc	PC+2
+0001c7 0e05      	add	r0, CH
+0001c8 954a      	dec	CL
+0001c9 f7c1      	brne	PC-7
+0001ca 0f03      	add	AL, BH
+0001cb 1d1f      	adc	AH, _0
+0001cc 1d2f      	adc	BL, _0
+0001cd cfea      	rjmp	gd_l
+                 
+                 gd_x:	
+0001ce 9408      	sec
+0001cf 9418      	sez
+0001d0 9508      	ret
+                 
+                 gd_e:	
+0001d1 9711      	sbiw	XL,1
+0001d2 f436      	brtc	PC+7
+0001d3 9500      	com	AL
+0001d4 9510      	com	AH
+0001d5 9520      	com	BL
+0001d6 5f0f      	subi	AL,-1
+0001d7 4f1f      	sbci	AH,-1
+0001d8 4f2f      	sbci	BL,-1
+0001d9 9488      	clc			;clear carry.bit
+0001da 9508      	ret
+                 
+                 gd_n:	
+0001db 9711      	sbiw	XL,1
+0001dc 9488      	clc			;clear carry.bit
+0001dd 9418      	sez			;set  zero.bit
+0001de 9508      	ret			
+                 	;/smc3/
+                 
+                 
+                 
+                 ;-tx--------------------------------------;
+                 tx_valdec:	
+                 	;Display a value in decimal string
+                 	;
+                 	;Call: BL:AH:AL 	= 24bit signed value to be displayed
+                 	;Ret:  BL:AH:AL	= broken
+0001df e250      	ldi	CH,' '
+0001e0 ff27      	sbrs	BL, 7
+0001e1 c007      	rjmp	PC+8		;/
+0001e2 9500      	com	AL
+0001e3 9510      	com	AH
+0001e4 9520      	com	BL
+0001e5 1d0f      	adc	AL,_0
+0001e6 1d1f      	adc	AH,_0
+0001e7 1d2f      	adc	BL,_0
+0001e8 e25d      	ldi	CH,'-'
+                 
+                 dp_8:  	;
+0001e9 2400      	clr	T0L		;digit counter
+0001ea 9403      	inc	T0L		;---- decimal string generating loop
+0001eb 2733      	clr	BH		;var1 /= 10;
+                 dp_18:
+0001ec e148      	ldi	CL,24		;
+                 dp_9: ;
+0001ed 0f00
+0001ee 1f11      	lslw	A		;
+0001ef 1f22
+0001f0 1f33      	rolw	B		;
+0001f1 303a      	cpi	BH,10		;
+0001f2 f010      	brcs	PC+3		;/
+0001f3 503a      	subi	BH,10		;
+0001f4 9503      	inc	AL		;
+                 
+                 dp_3:	;
+0001f5 954a      	dec	CL		;<--
+0001f6 f7b1      	brne	PC-9		;//
+                 	
+0001f7 5d30      	addi	BH,'0'	;Push the remander (a decimal digit)
+0001f8 933f      	push	BH		;/
+                 
+0001f9 150f      	cp	AL,_0		;if(var1 =! 0)
+0001fa 051f      	cpc	AH,_0		; continue digit loop;
+0001fb 052f      	cpc	BL,_0		;
+0001fc f769      	brne	PC-18		;/
+0001fd 2f05      	mov	AL, CH	;Sign
+0001fe d00d      	rcall	txmit		;/
+                 
+                 dpm3:	;
+0001ff 910f      	pop	AL		;Transmit decimal string
+000200 d00b      	rcall	txmit		;<-- Put a char to memory, console
+                 				;    or any other display device
+000201 940a      	dec	T0L		;
+000202 f7e1      	brne	PC-3		;/
+000203 9508      	ret			;/smc3/
+                 
+                 ;-tx-------------------------------------;
+                 TX_romstr:	
+                 	;Txmit ROM string
+                 	; IN:   Z = top of the string (ASCIZ)
+                 	; OUT:  Z = next string
+000204 9105      	lpm	AL, Z+
+000205 2300      	tst	AL
+000206 f409      	brne	txr1	;PC+2
+000207 9508      	ret
+                 txr1: 
+000208 d003      	rcall	txmit
+000209 cffa      	rjmp	TX_romstr		;/smc3/
+                 	
+                 ;-tx-------------------------------------;
+                 TXecho:	
+                 	; Transmit AL.
+00020a ff90      	sbrs	_Flags, 0	;echo off?
+00020b 9508      	ret
+                 TXmit:	
+00020c 9b5d      	sbis	UCSRA, UDRE
+00020d cffe      	rjmp	TXmit	;PC-1
+00020e b90c      	out	UDR, AL
+00020f 9508      	ret
+                 
+                 ;-tx---------------------------------------------------------;
+                 ;ROM Strings
+                 
+000210 0a0d
+000211 5050
+000212 003e      m_prompt:	.db	13,10, "PP>", 0
+000213 0a0d
+000214 7420
+000215 7079
+000216 2065
+000217 203f
+000218 6f66
+000219 2072
+00021a 6568
+00021b 706c
+00021c 002e      m_error:	.db	13,10, " type ? for help.", 0
+00021d 0a0d
+00021e 0a0d
+00021f 6f50
+000220 6577
+000221 5072
+000222 7261
+000223 6e74
+000224 7265
+000225 2d20
+000226 202d
+000227 4344
+000228 4d20
+000229 746f
+00022a 726f
+00022b 4320
+00022c 6e6f
+00022d 7274
+00022e 6c6f
+00022f 656c
+000230 2072
+000231 3156
+000232 302e
+000233 2020
+000234 3f5b
+000235 683a
+000236 6c65
+000237 5d70
+000238 0d20
+000239 000a      m_start:	.db	13,10,13,10, "PowerPartner -- DC Motor Controller V1.0  [?:help] ",13,10, 0
+                 
+00023a 0a0d
+00023b 0a0d      m_help:	.db	13,10,13,10
+                 		;.db "K - list TCNT1",13,10
+00023c 204c
+00023d 202d
+00023e 696c
+00023f 7473
+000240 7020
+000241 736f
+000242 0a0d      		.db "L - list pos",13,10
+000243 205a
+000244 202d
+000245 657a
+000246 6f72
+000247 7020
+000248 736f
+000249 0a0d
+00024a 0a0d      		.db "Z - zero pos",13,10,13,10
+00024b 3c46
+00024c 7570
+00024d 736c
+00024e 3e65
+00024f 2d20
+000250 6620
+000251 6477
+000252 6320
+000253 646d
+000254 0a0d
+000255 3c52
+000256 7570
+000257 736c
+000258 3e65
+000259 2d20
+00025a 7220
+00025b 7665
+00025c 6320
+00025d 646d
+00025e 0a0d      		.db "F<pulse> - fwd cmd",13,10, "R<pulse> - rev cmd",13,10
+00025f 3c47
+000260 6f70
+000261 3e73
+000262 2d20
+000263 6720
+000264 746f
+000265 206f
+000266 6d63
+000267 2064
+000268 0a0d
+000269 0a0d      		.db "G<pos> - goto cmd ",13,10,13,10
+00026a 2053
+00026b 202d
+00026c 6873
+00026d 776f
+00026e 5420
+00026f 552f
+000270 2d20
+000271 6620
+000272 6477
+000273 722f
+000274 7665
+000275 7320
+000276 696c
+000277 7370
+000278 7465
+000279 0a0d      		.db "S - show T/U - fwd/rev slipset",13,10
+00027a 3c54
+00027b 7570
+00027c 736c
+00027d 3e65
+00027e 2d20
+00027f 5420
+000280 663d
+000281 6477
+000282 7320
+000283 696c
+000284 2070
+000285 6573
+000286 0d74
+000287 550a
+000288 703c
+000289 6c75
+00028a 6573
+00028b 203e
+00028c 202d
+00028d 3d55
+00028e 6572
+00028f 2076
+000290 6c73
+000291 7069
+000292 7320
+000293 7465
+000294 0a0d      		.db "T<pulse> - T=fwd slip set",13,10,"U<pulse> - U=rev slip set",13,10
+000295 203f
+000296 202d
+000297 6568
+000298 706c
+000299 0a0d
+00029a 0000      		.db "? - help",13,10, 0,0
+                 
+
+
+RESOURCE USE INFORMATION
+------------------------
+
+Notice:
+The register and instruction counts are symbol table hit counts,
+and hence implicitly used resources are not counted, eg, the
+'lpm' instruction without operands implicitly uses r0 and z,
+none of which are counted.
+
+x,y,z are separate entities in the symbol table and are
+counted separately from r26..r31 here.
+
+.dseg memory usage only counts static data declared with .byte
+
+ATtiny2313 register use summary:
+r0 :   9 r1 :   6 r2 :   2 r3 :   0 r4 :   0 r5 :   0 r6 :   0 r7 :   0 
+r8 :   0 r9 :   0 r10:   7 r11:   6 r12:   6 r13:   0 r14:   0 r15:  23 
+r16: 117 r17:  51 r18:  35 r19:  42 r20:  10 r21:   5 r22:   0 r23:   0 
+r24:   0 r25:   9 r26:   6 r27:   2 r28:  12 r29:   8 r30:   4 r31:   4 
+x  :   4 y  :  10 z  :   1 
+Registers used: 23 out of 35 (65.7%)
+
+ATtiny2313 instruction use summary:
+adc   :   7 add   :   6 adiw  :   1 and   :   0 andi  :   3 asr   :   0 
+bclr  :   0 bld   :   0 brbc  :   0 brbs  :   0 brcc  :   2 brcs  :   9 
+break :   0 breq  :  14 brge  :   2 brhc  :   0 brhs  :   0 brid  :   0 
+brie  :   0 brlo  :   0 brlt  :   1 brmi  :   0 brne  :  24 brpl  :   0 
+brsh  :   0 brtc  :   1 brts  :   0 brvc  :   0 brvs  :   0 bset  :   0 
+bst   :   0 cbi   :   5 cbr   :   0 clc   :   3 clh   :   0 cli   :   2 
+cln   :   0 clr   :   7 cls   :   0 clt   :   1 clv   :   0 clz   :   1 
+com   :   6 cp    :   5 cpc   :   2 cpi   :  26 cpse  :   0 dec   :   6 
+eor   :   0 icall :   0 ijmp  :   0 in    :   9 inc   :   6 ld    :   3 
+ldd   :   5 ldi   :  70 lds   :   7 lpm   :   1 lsl   :   1 lsr   :   1 
+mov   :  23 movw  :   0 neg   :   0 nop   :   0 or    :   0 ori   :   0 
+out   :  32 pop   :  16 push  :  16 rcall :  43 ret   :  16 reti  :   3 
+rjmp  :  55 rol   :   3 ror   :   3 sbc   :   6 sbci  :   4 sbi   :  12 
+sbic  :   2 sbis  :   1 sbiw  :   3 sbr   :   0 sbrc  :   0 sbrs  :   2 
+sec   :   2 seh   :   0 sei   :   3 sen   :   0 ser   :   0 ses   :   0 
+set   :   1 sev   :   0 sez   :   2 sleep :   0 spm   :   0 st    :   3 
+std   :   3 sts   :   8 sub   :   7 subi  :   6 swap  :   0 tst   :   1 
+wdr   :   0 
+Instructions used: 58 out of 103 (56.3%)
+
+ATtiny2313 memory use summary [bytes]:
+Segment   Begin    End      Code   Data   Used    Size   Use%
+---------------------------------------------------------------
+[.cseg] 0x000000 0x000536   1056    278   1334    2048  65.1%
+[.dseg] 0x000060 0x00008f      0     47     47     128  36.7%
+[.eseg] 0x000000 0x000010      0     16     16     128  12.5%
+
+Assembly complete, 0 errors, 5 warnings
