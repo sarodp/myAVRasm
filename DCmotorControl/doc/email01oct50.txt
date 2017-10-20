@@ -1,0 +1,20 @@
+Noke,
+1. โปรแกรมทำ Position Control ทั้งแบบ Absolute และ Relative
+   ทำงานได้แล้วนะ พร้อมกับโปรแกรมสั่งงานผ่าน RS232 ด้วย
+
+2. Speed Motor - หน่วยเป็น Pulse/sec วัดได้ตามนี้นะ
+       ที่ 10VDC : 60000 pulse ใช้เวลา 24sec. = 2500 pulse/sec
+       ที่  5VDC : 60000 pulse ใช้เวลา 57sec. = 1053 pulse/sec
+
+3. ตัวอย่างหน้าจอพีซี ที่รันโปรแกรม Hyperterm ติดต่อกับบอร์ด ATtiny2313 และสั่งรันคำสั่งพร้อมผลการรัน ตามไฟล์.ppt ที่แนบมานะ
+
+4. งานต่อไป คือ 
+	- ทดสอบกับระบบแมคคานิคจริง
+	- ทำ hardware รองรับ 2 Speed
+	- เขียนโปรแกรมรองรับ 2 speed
+	- เพิ่ม  hardware Serial EEPROM "24LCxxx"
+	  เพื่อเก็บ Position Table
+	- เขียนโปรแกรม Load/Run Position Table
+
+สาโรจน์
+01-oct-50
